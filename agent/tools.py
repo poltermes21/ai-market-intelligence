@@ -12,10 +12,12 @@ _ALLOWED_PREFIXES = ("select", "with", "explain")
 
 
 def _safe_query(sql: str) -> str:
-    """Execute a read-only SQL query; reject any write statements."""
+    """Execute a read-only SQL query; reject write statements and staging access."""
     stripped = sql.strip().lower()
     if not any(stripped.startswith(p) for p in _ALLOWED_PREFIXES):
         return "Error: only SELECT / WITH / EXPLAIN queries are allowed."
+    if "staging." in stripped:
+        return "Error: staging tables are internal dbt intermediaries — query marts.* or raw_* tables instead."
     conn = get_db_connection()
     try:
         result = conn.execute(text(sql))
@@ -69,7 +71,8 @@ def get_top_hiring_companies(role: str = "") -> str:
     """Get the companies posting the most jobs this week.
     Optionally filter by role keyword (e.g. 'data engineer', 'ml engineer')."""
     if role:
-        where_clause = f"AND title ILIKE '%{role.replace(\"'\", \"''\")}%'"
+        safe_role = role.replace("'", "''")
+        where_clause = f"AND title ILIKE '%{safe_role}%'"
     else:
         where_clause = ""
 

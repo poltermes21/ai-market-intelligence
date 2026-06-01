@@ -1,5 +1,3 @@
-from datetime import date
-
 import streamlit as st
 from langchain_core.messages import HumanMessage
 
@@ -34,16 +32,11 @@ if prompt := st.chat_input("Ask me anything about the market..."):
             try:
                 from agent.graph import graph
 
-                history = [
-                    HumanMessage(content=m["content"])
-                    if m["role"] == "user"
-                    else m["content"]
-                    for m in st.session_state.messages
-                ]
                 result = graph.invoke({"messages": [HumanMessage(content=prompt)]})
                 answer = result["messages"][-1].content
             except Exception as e:
-                answer = f"Sorry, I encountered an error: {e}\n\nMake sure `OPENAI_API_KEY` is set and the database is populated."
+                import traceback
+                answer = f"**Error:** {e}\n\n```\n{traceback.format_exc()}\n```"
 
         st.markdown(answer)
 

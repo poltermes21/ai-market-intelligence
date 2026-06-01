@@ -1,12 +1,27 @@
-"""LangGraph agent pipeline for the Market Intelligence AI."""
+"""LangGraph agent pipeline — uses create_react_agent (LangGraph 1.x API)."""
+import logging
 import os
-from typing import Annotated, TypedDict
+from datetime import date
 
-from langchain_core.messages import AnyMessage, SystemMessage
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# LangSmith tracing — enabled when LANGCHAIN_TRACING_V2=true in .env
+if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true":
+    api_key = os.getenv("LANGCHAIN_API_KEY", "")
+    if api_key and not api_key.startswith("your-"):
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "ai-market-intelligence")
+        logger.info("LangSmith tracing enabled — project: %s", os.environ["LANGCHAIN_PROJECT"])
+    else:
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+
+from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph import END, StateGraph
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import create_react_agent
 
 from agent.prompts import SYSTEM_PROMPT
 from agent.tools import (
@@ -19,39 +34,16 @@ from agent.tools import (
 tools = [query_database, get_trending_skills, get_top_hiring_companies, summarize_recent_news]
 
 
-class AgentState(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
-
-
-def _get_llm():
-    return ChatOpenAI(
+def _build_graph():
+    llm = ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-4o"),
         temperature=0,
         api_key=os.getenv("OPENAI_API_KEY"),
-    ).bind_tools(tools)
+    )
+    system_message = SystemMessage(
+        content=SYSTEM_PROMPT.replace("{today}", date.today().isoformat())
+    )
+    return create_react_agent(model=llm, tools=tools, prompt=system_message)
 
 
-def agent_node(state: AgentState) -> AgentState:
-    llm = _get_llm()
-    msgs = state["messages"]
-    if not any(isinstance(m, SystemMessage) for m in msgs):
-        msgs = [SystemMessage(content=SYSTEM_PROMPT)] + list(msgs)
-    response = llm.invoke(msgs)
-    return {"messages": [response]}
-
-
-def should_continue(state: AgentState) -> str:
-    last = state["messages"][-1]
-    if hasattr(last, "tool_calls") and last.tool_calls:
-        return "tools"
-    return END
-
-
-builder = StateGraph(AgentState)
-builder.add_node("agent", agent_node)
-builder.add_node("tools", ToolNode(tools))
-builder.set_entry_point("agent")
-builder.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
-builder.add_edge("tools", "agent")
-
-graph = builder.compile()
+graph = _build_graph()
